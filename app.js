@@ -1,7 +1,8 @@
 const STORAGE_KEY = "community_orders_v3";
 const SESSION_KEY = "community_user_v1";
 const TOKEN_KEY = "community_token_v1";
-const USE_REMOTE = window.location.protocol !== "file:";
+// 强制使用本地模式（localStorage），不依赖后端服务器
+const USE_REMOTE = false;
 
 const USERS = [
   { username: "admin", password: "123456", role: "admin", displayName: "管理员" },
