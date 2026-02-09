@@ -1,0 +1,12 @@
+# Runtime / data
+/db.json
+*.csv
+
+# Large binaries
+*.exe
+
+# Local agent/work dirs
+.claude/
+
+# Node artifacts
+node_modules/

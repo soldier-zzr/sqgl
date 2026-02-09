@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>社群转化订单台账</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-shape shape-a"></div>
+  <div class="bg-shape shape-b"></div>
+
+  <main class="container">
+    <section id="loginSection" class="auth-card">
+      <p class="kicker">团队协作登录</p>
+      <h1>社群转化订单台账</h1>
+      <p class="desc">本地登录版，支持飞书 CSV 一键导入。</p>
+      <form id="loginForm" class="auth-form">
+        <label>
+          用户名
+          <input id="loginUsername" type="text" placeholder="例如：admin" required />
+        </label>
+        <label>
+          密码
+          <input id="loginPassword" type="password" placeholder="请输入密码" required />
+        </label>
+        <button class="btn" type="submit">登录</button>
+      </form>
+      <div class="hint">
+        默认账号：admin / 123456、member1 / 123456、member2 / 123456
+      </div>
+    </section>
+
+    <section id="appSection" class="hidden">
+      <header class="hero">
+        <div>
+          <p class="kicker">订单管理面板</p>
+          <h1>社群转化订单台账</h1>
+          <p class="desc" id="welcomeText"></p>
+        </div>
+        <div class="toolbar">
+          <label class="import-label btn btn-ghost" for="importFile">一键导入飞书 CSV</label>
+          <input id="importFile" type="file" accept=".csv" class="hidden" />
+          <button id="exportBtn" class="btn btn-ghost">导出 CSV</button>
+          <button id="logoutBtn" class="btn btn-danger">退出登录</button>
+        </div>
+      </header>
+
+      <section class="stats" id="statsCards"></section>
+
+      <section class="panel">
+        <h2>新增订单</h2>
+        <form id="orderForm" class="form-grid">
+          <label>
+            成交日期
+            <input type="date" id="conversionDate" required />
+          </label>
+          <label>
+            转化期数
+            <input type="text" id="phase" placeholder="例如：第3期" />
+          </label>
+          <label>
+            组别
+            <input type="text" id="groupName" placeholder="例如：A组" />
+          </label>
+          <label>
+            渠道来源
+            <input type="text" id="sourceChannel" placeholder="例如：社群裂变" />
+          </label>
+          <label>
+            售卖平台
+            <input type="text" id="sellPlatform" placeholder="例如：微信" />
+          </label>
+          <label>
+            微信昵称
+            <input type="text" id="nickname" placeholder="客户昵称" required />
+          </label>
+          <label>
+            手机号
+            <input type="text" id="phone" placeholder="可选" />
+          </label>
+          <label>
+            尾款电话
+            <input type="text" id="finalPhone" placeholder="可选" />
+          </label>
+          <label>
+            尾款情况
+            <select id="finalPaymentStatus" required>
+              <option value="待支付">待支付</option>
+              <option value="追款中">追款中</option>
+              <option value="已支付">已支付</option>
+              <option value="已退款">已退款</option>
+              <option value="无效线索">无效线索</option>
+            </select>
+          </label>
+          <label>
+            筛选人/负责人
+            <input type="text" id="owner" placeholder="例如：张三" required />
+          </label>
+          <label>
+            IP号
+            <input type="text" id="ipNo" placeholder="可选" />
+          </label>
+          <label>
+            加IP时间
+            <input type="datetime-local" id="ipTime" />
+          </label>
+          <label>
+            三筛选/跟进
+            <input type="text" id="followUp" placeholder="可选" />
+          </label>
+          <label>
+            转化金额（元）
+            <input type="number" id="amount" step="0.01" min="0" placeholder="例如：1999" required />
+          </label>
+          <label class="span-2">
+            备注
+            <input type="text" id="note" placeholder="可选" />
+          </label>
+          <div class="actions span-2">
+            <button type="submit" class="btn">保存订单</button>
+            <button type="button" id="resetBtn" class="btn btn-ghost">清空输入</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>订单明细</h2>
+          <div class="filters">
+            <input type="date" id="filterDate" />
+            <input type="text" id="filterNickname" placeholder="筛选昵称" />
+            <input type="text" id="filterOwner" placeholder="筛选负责人" />
+            <label class="filter-check">
+              <input type="checkbox" id="filterOnlyQipan" checked />
+              仅起盘营
+            </label>
+            <select id="filterStatus">
+              <option value="">全部尾款状态</option>
+              <option value="待支付">待支付</option>
+              <option value="追款中">追款中</option>
+              <option value="已支付">已支付</option>
+              <option value="已退款">已退款</option>
+              <option value="无效线索">无效线索</option>
+            </select>
+            <button id="clearFilterBtn" class="btn btn-ghost">清除筛选</button>
+            <button id="deleteSelectedBtn" class="btn btn-danger" type="button">删除选中</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><input id="selectAllOnPage" type="checkbox" /></th>
+                <th>成交日期</th>
+                <th>尾款情况</th>
+                <th>微信昵称</th>
+                <th>负责人</th>
+                <th>金额类型</th>
+                <th>计入金额（元）</th>
+                <th>手机号</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="ordersTbody"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="prevPageBtn" class="btn btn-ghost" type="button">上一页</button>
+          <span id="pageInfo" class="pager-info">第 1 / 1 页（共 0 条）</span>
+          <button id="nextPageBtn" class="btn btn-ghost" type="button">下一页</button>
+        </div>
+      </section>
+
+      <section class="summary-grid">
+        <article class="panel">
+          <h2>每日转化金额</h2>
+          <ul id="dailySummary" class="summary-list"></ul>
+        </article>
+        <article class="panel">
+          <h2>个人转化情况</h2>
+          <ul id="personSummary" class="summary-list"></ul>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>状态变更日志（最近50条）</h2>
+        <ul id="statusLogList" class="summary-list"></ul>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
