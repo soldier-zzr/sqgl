@@ -1,8 +1,11 @@
 const STORAGE_KEY = "community_orders_v3";
 const SESSION_KEY = "community_user_v1";
 const TOKEN_KEY = "community_token_v1";
-// 强制使用本地模式（localStorage），不依赖后端服务器
-const USE_REMOTE = false;
+// 自动检测：如果有配置后端 API 地址则使用远程模式，否则使用本地模式
+const API_BASE = window.location.hostname === 'localhost'
+  ? 'http://localhost:8787'
+  : (window.API_BASE_URL || ''); // 生产环境需要配置后端地址
+const USE_REMOTE = Boolean(API_BASE);
 
 const USERS = [
   { username: "admin", password: "123456", role: "admin", displayName: "管理员" },
@@ -128,7 +131,8 @@ async function apiRequest(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(path, { ...options, headers });
+  const url = API_BASE + path;
+  const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);

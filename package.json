@@ -1,0 +1,19 @@
+{
+  "name": "sqgl",
+  "version": "1.0.0",
+  "description": "社群转化订单管理系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "order-management",
+    "dashboard"
+  ],
+  "author": "",
+  "license": "MIT"
+}
