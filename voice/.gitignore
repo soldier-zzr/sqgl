@@ -1,0 +1,30 @@
+# ── 敏感配置（禁止提交）──
+config.py
+cookies.json
+
+# ── PyInstaller 构建产物 ──
+build/
+dist/
+*.spec.bak
+
+# ── 音频输出 ──
+output/
+
+# ── Python 缓存 ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── 生成的图标文件 ──
+logo.png
+logo_fixed.ico
+
+# ── 调试截图 ──
+output/debug_*.png
+
+# ── 系统文件 ──
+.DS_Store
+Thumbs.db
+nul
