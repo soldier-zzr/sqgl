@@ -21,8 +21,12 @@ def sanitize_prefix(text: str, max_len: int = 18) -> str:
 
 def build_filename(text: str, ext: str, *, index: int | None = None) -> str:
     normalized_ext = ext if ext.startswith(".") else f".{ext}"
-    # 按需求仅保留文案前两个字作为昵称前缀
-    prefix = sanitize_prefix(text, max_len=2)
+    # 支持「备注::文案」格式："::" 前面作为文件名，否则取前两个字
+    if "::" in text:
+        raw_prefix = text.split("::", 1)[0]
+        prefix = sanitize_prefix(raw_prefix, max_len=60)
+    else:
+        prefix = sanitize_prefix(text, max_len=2)
     if index is None:
         return f"{prefix}{normalized_ext.lower()}"
     return f"{index:03d}_{prefix}{normalized_ext.lower()}"

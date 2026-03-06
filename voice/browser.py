@@ -8,6 +8,7 @@ import queue
 import sys
 import threading
 import base64
+import time
 from pathlib import Path
 from typing import Optional, Callable, Tuple
 
@@ -18,11 +19,14 @@ from playwright.sync_api import sync_playwright, BrowserContext, Page
 # cookies.json / output/ 始终保存在 exe 旁边
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys.executable).resolve().parent
-    # 关键：告诉 Playwright 去系统已安装目录找浏览器，而不是在 _internal 里找
     import os as _os
-    _bp = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
-    if _os.path.isdir(_bp):
-        _os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _bp)
+    # 优先使用 exe 旁边打包的浏览器，没有则回退到系统安装
+    _local_bp = str(BASE_DIR / "ms-playwright")
+    _system_bp = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
+    if _os.path.isdir(_local_bp):
+        _os.environ["PLAYWRIGHT_BROWSERS_PATH"] = _local_bp
+    elif _os.path.isdir(_system_bp):
+        _os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _system_bp)
 else:
     BASE_DIR = Path(__file__).resolve().parent
 COOKIES_FILE = BASE_DIR / "cookies.json"
@@ -30,6 +34,16 @@ OUTPUT_DIR = BASE_DIR / "output"
 LOGIN_URL = "https://ip.fenshen123.com/#/login"
 USERNAME = "13920153343"
 PASSWORD = "zhufeng123"
+
+# 从同目录下 账号.txt 读取账号密码（优先级高于内置默认值）
+_account_file = BASE_DIR / "账号.txt"
+if _account_file.exists():
+    for _line in _account_file.read_text(encoding="utf-8-sig").splitlines():
+        _line = _line.strip()
+        if _line.startswith("账号="):
+            USERNAME = _line.split("=", 1)[1].strip()
+        elif _line.startswith("密码="):
+            PASSWORD = _line.split("=", 1)[1].strip()
 
 
 # ── Cookie 管理 ────────────────────────────────────────────
@@ -111,6 +125,29 @@ def _detect_audio_ext(data: bytes) -> str:
     if data[4:8] == b'ftyp':
         return ".m4a"
     return ".mp3"
+
+
+MIN_AUDIO_BYTES = 8 * 1024
+
+
+def _is_probably_audio_bytes(data: bytes) -> bool:
+    """过滤明显无效的短片段/伪音频响应。"""
+    if not data or len(data) < MIN_AUDIO_BYTES:
+        return False
+    if data[:3] == b'ID3':
+        return True
+    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
+        return True
+    if data[:4] == b'RIFF' and data[8:12] == b'WAVE':
+        return True
+    if data[:4] == b'OggS':
+        return True
+    if data[:4] == b'fLaC':
+        return True
+    if data[4:8] == b'ftyp':
+        return True
+    # 允许无标准头但体积足够大的媒体流
+    return len(data) >= 48 * 1024
 
 
 # ── 登录 ───────────────────────────────────────────────────
@@ -443,40 +480,117 @@ def _click_preview_once(page: Page, sel: str) -> bool:
         return False
 
 
+def _audio_hint_score(url: str, content_type: str) -> int:
+    """给音频候选打分，分值越高越可能是目标 TTS 成品。"""
+    score = 0
+    url_l = (url or "").lower()
+    ct_l = (content_type or "").lower()
+
+    if ct_l.startswith("audio/"):
+        score += 4
+    if any(k in ct_l for k in ["mpeg", "mp3", "wav", "ogg", "aac", "m4a"]):
+        score += 2
+    if any(k in url_l for k in [".mp3", ".wav", ".ogg", ".aac", ".m4a"]):
+        score += 3
+    if any(k in url_l for k in ["/audio/", "/tts", "preview", "audition", "speech", "voice"]):
+        score += 2
+    return score
+
+
+def _is_likely_tts_url(url: str) -> bool:
+    u = (url or "").lower()
+    if not u.startswith("http://") and not u.startswith("https://") and not u.startswith("blob:"):
+        return False
+    return any(k in u for k in [
+        "/audition/",
+        "/api/user/audition",
+        "/tts",
+        "/speech",
+        "/audio/",
+        ".mp3",
+        ".wav",
+        ".ogg",
+        ".aac",
+        ".m4a",
+        "voice",
+    ])
+
+
+def _collect_media_urls(page: Page) -> list[str]:
+    try:
+        urls = page.evaluate("""() => {
+            const out = [];
+            const medias = Array.from(document.querySelectorAll('audio,video'));
+            for (const m of medias) {
+                const s1 = m.currentSrc || '';
+                const s2 = m.src || '';
+                if (s1) out.push(s1);
+                if (s2) out.push(s2);
+                const child = m.querySelector('source');
+                if (child && child.src) out.push(child.src);
+            }
+            return Array.from(new Set(out));
+        }""")
+        return [u for u in (urls or []) if isinstance(u, str) and u]
+    except Exception:
+        return []
+
+
 def _click_preview_and_capture(page: Page, on_status: Callable) -> Tuple[Optional[bytes], str]:
     """点击试听并捕获音频，返回 (data, 扩展名)"""
     on_status("等待试听按钮就绪...")
 
-    audio_data: list = []
-    seen_urls: set = set()
+    audio_candidates: list[dict] = []
+    seen_keys: set = set()
+    click_ts = time.time()
+    pre_media_urls = set(_collect_media_urls(page))
 
     def on_response(response):
-        url = response.url
-        if url in seen_urls:
-            return
-        content_type = response.headers.get("content-type", "")
-        is_audio = (
-            "audio" in content_type
-            or any(k in url.lower() for k in [
-                ".mp3", ".wav", ".ogg", ".aac", ".m4a",
-                "tts", "/audio/", "speech", "voice", "sound",
-            ])
-        )
-        if is_audio and "json" not in content_type:
-            try:
-                data = response.body()
-                if data and len(data) > 1000:
-                    audio_data.append(data)
-                    seen_urls.add(url)
-                    ext = _detect_audio_ext(data)
-                    on_status(f"捕获音频 {len(data)//1024} KB，格式：{ext}")
-            except Exception:
-                pass
+        try:
+            url = response.url
+            content_type = response.headers.get("content-type", "")
+            url_l = url.lower()
+            ct_l = content_type.lower()
+            score = _audio_hint_score(url_l, ct_l)
+            if score <= 0 or "json" in ct_l:
+                return
+
+            data = response.body()
+            if not _is_probably_audio_bytes(data):
+                return
+
+            key = (url, len(data))
+            if key in seen_keys:
+                return
+
+            # 只接受点击「试听」之后到达的音频响应，避免拿到上一条任务残留请求
+            now_ts = time.time()
+            if now_ts + 0.01 < click_ts:
+                return
+
+            seen_keys.add(key)
+            ext = _detect_audio_ext(data)
+            audio_candidates.append(
+                {
+                    "data": data,
+                    "url": url,
+                    "content_type": content_type,
+                    "size": len(data),
+                    "score": score,
+                    "ts": now_ts,
+                }
+            )
+            on_status(f"捕获候选音频 {len(data)//1024} KB，格式：{ext}")
+        except Exception:
+            pass
 
     page.on("response", on_response)
 
     try:
         selectors = [
+            ".right-create-box .st-part:has-text('试听')",
+            ".taici-box .st-part:has-text('试听')",
+            ".st-part:has-text('试听')",
             "text=试听",
             "button:has-text('试听')",
             "span:has-text('试听')",
@@ -488,61 +602,115 @@ def _click_preview_and_capture(page: Page, on_status: Callable) -> Tuple[Optiona
         if not sel:
             raise RuntimeError("未找到「试听」按钮")
 
-        on_status("点击试听，等待音频响应...")
+        for attempt in range(2):
+            on_status("点击试听，等待音频响应..." if attempt == 0 else "首次未命中，重试试听一次...")
 
-        if not _click_preview_once(page, sel):
-            raise RuntimeError("点击「试听」失败")
+            if not _click_preview_once(page, sel):
+                raise RuntimeError("点击「试听」失败")
 
-        # 等待音频响应，每 500ms 检查一次；若按钮变为可点击（TTS 完成），立刻再点
-        for _ in range(90):  # 最多等 45 秒
-            if audio_data:
+            click_ts = time.time()
+
+            # 等待音频响应；单次点击后等待，避免高频点击导致播放中断
+            max_rounds = 90 if attempt == 0 else 50
+            last_count = len(audio_candidates)
+            stable_rounds = 0
+            for _ in range(max_rounds):  # 首次最多 45 秒；重试最多 25 秒
+                page.wait_for_timeout(500)
+                count = len(audio_candidates)
+                if count <= 0:
+                    continue
+                if count == last_count:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 0
+                    last_count = count
+                # 候选数量稳定 1.5 秒后再选，尽量拿到完整音频而不是首个短片段
+                if stable_rounds >= 3:
+                    break
+            if audio_candidates:
                 break
-            page.wait_for_timeout(500)
-            if not audio_data:
-                try:
-                    loc = page.locator(sel).first
-                    if loc.is_visible(timeout=200) and _is_preview_clickable(loc):
-                        _click_preview_once(page, sel)
-                        page.wait_for_timeout(2000)  # 点击后等 2 秒，防止重复点击导致页面抖动
-                except Exception:
-                    pass
 
     finally:
         page.remove_listener("response", on_response)
 
-    if audio_data:
-        data = audio_data[0]
+    if audio_candidates:
+        best = max(
+            audio_candidates,
+            key=lambda c: (
+                c["size"],      # 优先更大体积（通常更接近完整音频）
+                c["score"],     # 再看 URL/Content-Type 命中程度
+                c["ts"],        # 体积和分值相同时取最新
+            ),
+        )
+        data = best["data"]
         ext = _detect_audio_ext(data)
-        on_status(f"音频捕获成功！格式：{ext}")
+        on_status(
+            f"音频捕获成功！格式：{ext}，来源体积 {best['size']//1024} KB（共候选 {len(audio_candidates)} 条）"
+        )
         return data, ext
 
     # 网络事件没有命中时，尝试从播放器当前媒体源直接拉取
     try:
         media_srcs = page.evaluate("""() => {
-            const srcs = [];
+            const rows = [];
             const medias = Array.from(document.querySelectorAll('audio,video'));
             for (const m of medias) {
                 const s1 = m.currentSrc || '';
                 const s2 = m.src || '';
-                if (s1) srcs.push(s1);
-                if (s2) srcs.push(s2);
+                if (s1) rows.push({
+                    src: s1,
+                    paused: !!m.paused,
+                    currentTime: Number(m.currentTime || 0),
+                    duration: Number(m.duration || 0),
+                });
+                if (s2 && s2 !== s1) rows.push({
+                    src: s2,
+                    paused: !!m.paused,
+                    currentTime: Number(m.currentTime || 0),
+                    duration: Number(m.duration || 0),
+                });
                 const child = m.querySelector('source');
-                if (child && child.src) srcs.push(child.src);
+                if (child && child.src) rows.push({
+                    src: child.src,
+                    paused: !!m.paused,
+                    currentTime: Number(m.currentTime || 0),
+                    duration: Number(m.duration || 0),
+                });
             }
-            return Array.from(new Set(srcs)).slice(0, 5);
+            const unique = [];
+            const seen = new Set();
+            for (const r of rows) {
+                if (!r.src || seen.has(r.src)) continue;
+                seen.add(r.src);
+                unique.push(r);
+            }
+            unique.sort((a, b) => {
+                const aScore = (a.paused ? 0 : 2) + (a.currentTime > 0 ? 1 : 0) + (a.duration > 0 ? 1 : 0);
+                const bScore = (b.paused ? 0 : 2) + (b.currentTime > 0 ? 1 : 0) + (b.duration > 0 ? 1 : 0);
+                return bScore - aScore;
+            });
+            return unique.slice(0, 5);
         }""")
     except Exception:
         media_srcs = []
 
-    for src in media_srcs:
+    for media in media_srcs:
+        src = media.get("src") if isinstance(media, dict) else media
         if not src:
+            continue
+        src_l = src.lower()
+        is_new_src = src not in pre_media_urls
+        if not _is_likely_tts_url(src):
+            continue
+        # 尽量使用点击后新增的 src；旧 src 仅在明确 audition 链路时兜底
+        if (not is_new_src) and ("/audition/" not in src_l) and ("/api/user/audition" not in src_l):
             continue
         try:
             if src.startswith("http://") or src.startswith("https://"):
                 resp = page.context.request.get(src, timeout=15000)
                 if resp.ok:
                     data = resp.body()
-                    if data and len(data) > 1000:
+                    if _is_probably_audio_bytes(data):
                         ext = _detect_audio_ext(data)
                         on_status(f"播放器直取成功！格式：{ext}")
                         return data, ext
@@ -569,7 +737,7 @@ def _click_preview_and_capture(page: Page, on_status: Callable) -> Tuple[Optiona
                 )
                 if b64:
                     data = base64.b64decode(b64)
-                    if data and len(data) > 1000:
+                    if _is_probably_audio_bytes(data):
                         ext = _detect_audio_ext(data)
                         on_status(f"播放器blob提取成功！格式：{ext}")
                         return data, ext
@@ -654,13 +822,20 @@ class BrowserSession:
                         try:
                             _stop_preview_if_playing(page)
                             _activate_text_mode(page)
-                            _fill_text(page, text, self._on_status)
+                            # 支持「备注::文案」格式："::" 前面作文件名，后面才是提交给TTS的文案
+                            if "::" in text:
+                                file_prefix, tts_text = text.split("::", 1)
+                                file_prefix = file_prefix.strip() or "output"
+                                tts_text = tts_text.strip()
+                            else:
+                                file_prefix = text[:2].strip() or "output"
+                                tts_text = text
+                            _fill_text(page, tts_text, self._on_status)
                             audio_bytes, ext = _click_preview_and_capture(page, self._on_status)
 
                             if audio_bytes:
                                 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-                                prefix = text[:2].strip() or "output"
-                                output_path = OUTPUT_DIR / f"{prefix}{ext}"
+                                output_path = OUTPUT_DIR / f"{file_prefix}{ext}"
                                 output_path.write_bytes(audio_bytes)
                                 self._on_status(f"完成！已保存：{output_path.name}")
                                 self._on_done(str(output_path.resolve()))

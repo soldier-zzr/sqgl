@@ -1,6 +1,11 @@
 # ── 敏感配置（禁止提交）──
 config.py
 cookies.json
+sender/session.json
+
+# ── 数据文件（含个人信息）──
+*.xlsx
+tts_input.txt
 
 # ── PyInstaller 构建产物 ──
 build/

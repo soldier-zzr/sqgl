@@ -1,154 +1,166 @@
-# AI超级分身 音频下载工具
+# AI超级分身 音频下载工具 + 云中客批量语音发送
 
-基于 Playwright 浏览器自动化，批量将文案提交至 AI 超级分身平台生成语音，并自动捕获、保存音频文件。
+一套完整的批量个性化语音营销自动化工具，包含三个模块：
 
----
-
-## 功能特性
-
-- **批量队列处理**：粘贴多行文案，自动逐条生成音频
-- **智能音频捕获**：通过网络拦截实时抓取 TTS 音频，无需手动操作
-- **访问密码保护**：启动时验证密码，防止未授权使用
-- **进度可视化**：队列状态实时更新（成功 / 失败 / 待处理）
-- **一键打开输出目录**：音频文件自动保存，支持快速定位
+1. **AI话术生成**（`gen_tts_agent.py`）— DeepSeek API 为每人生成个性化话术
+2. **TTS音频生成**（`main.py` GUI）— 自动提交话术、拦截下载 MP3
+3. **CRM批量发送**（`sender/sender.py`）— Playwright 自动发送语音到云中客 IM
 
 ---
 
-## 项目结构
+## 完整使用流程
 
 ```
-voice/
-├── main.py                 # 启动入口（含访问密码验证）
-├── browser.py              # Playwright 浏览器自动化 & 音频捕获核心
-├── config.example.py       # 配置文件模板（复制为 config.py 后填写密码）
-├── ui/
-│   ├── app.py              # 主界面（CustomTkinter）
-│   ├── models.py           # 队列数据模型
-│   ├── queue_manager.py    # 队列管理逻辑
-│   └── theme.py            # 界面主题配置
-├── utils/
-│   └── naming.py           # 输出文件命名工具
-├── logo.ico                # 应用图标（原始）
-├── make_icon.py            # 图标生成脚本
-├── AI音频下载工具.spec      # PyInstaller 打包配置
-└── output/                 # 音频输出目录（自动生成，已忽略）
+话术原料.xlsx
+    │
+    ▼
+① GUI 里点「导入 Excel 自动生成话术」（或命令行运行 gen_tts_agent.py）
+    │  DeepSeek API 生成个性化话术，自动加入任务队列
+    ▼
+② TTS GUI 点「开始队列」
+    │  自动提交到 AI超级分身，拦截 MP3 保存到 output/
+    ▼
+③ python sender/sender.py
+    │  Playwright 打开云中客，逐一上传发送 MP3
+    ▼
+完成
 ```
 
 ---
 
-## 环境依赖
-
-| 依赖 | 版本要求 | 说明 |
-|------|---------|------|
-| Python | 3.10+ | 推荐 3.13 |
-| customtkinter | 5.x | 现代化 Tkinter UI |
-| playwright | 1.x | 浏览器自动化 |
-| Pillow | 任意 | 图标处理（仅打包时需要）|
-
-安装依赖：
+## 环境准备
 
 ```bash
-pip install customtkinter playwright pillow
-python -m playwright install chromium
+pip install playwright customtkinter openai openpyxl
+playwright install chromium
 ```
 
 ---
 
-## 快速开始
+## 配置
 
-### 1. 配置访问密码
+复制配置模板并填写实际值：
 
 ```bash
 cp config.example.py config.py
 ```
 
-编辑 `config.py`，将 `your_password_here` 改为实际密码：
+编辑 `config.py`：
 
 ```python
-ACCESS_CODE = "your_password_here"
+ACCESS_CODE      = "TTS工具登录密码"
+DEEPSEEK_API_KEY = "sk-xxxxxxxx"       # https://platform.deepseek.com
+CRM_PHONE        = "手机号@姓名"        # 云中客账号
+CRM_PASSWORD     = "密码"
 ```
 
-> `config.py` 已加入 `.gitignore`，不会被提交到仓库。
+---
 
-### 2. 运行程序
+## 模块说明
+
+### 一、准备 `话术原料.xlsx`
+
+| 姓名 | 赛道 | 备注 |
+|------|------|------|
+| 张三 | 知识付费 | 起盘营4期260302张三 |
+| 李四 | 电商 | 起盘营4期260302李四 |
+
+- **姓名**：用于 AI 生成话术中称呼对方
+- **赛道**：用于个性化话术（留空则使用通用模板）
+- **备注**：MP3 文件名，必须与云中客好友备注一致（唯一标识）
+
+### 二、生成话术 + MP3
+
+**推荐：GUI 一键完成**
 
 ```bash
 python main.py
 ```
 
-启动后弹出密码验证窗口，输入正确密码后进入主界面。
+输入访问密码后：
+1. 点击「导入 Excel 自动生成话术」→ 选择 `话术原料.xlsx`
+2. 等待状态栏显示"已加入 N 条任务"
+3. 点「开启浏览器」→ 点「开始队列」
+4. 等待所有任务状态变为绿色（成功）
 
-### 3. 使用流程
-
-1. 点击 **开启浏览器** → 等待浏览器自动登录平台
-2. 在左侧文本框粘贴文案（每行一条）
-3. 点击 **加入队列**
-4. 点击 **开始队列** → 自动逐条处理
-5. 处理完成后点击 **打开输出目录** 查看音频文件
-
----
-
-## 打包为 EXE
-
-### 前置准备
-
-确保打包所用的 Python 环境已安装所有依赖：
+**命令行分步执行**
 
 ```bash
-pip install pyinstaller customtkinter playwright pillow
-python -m playwright install chromium
+python gen_tts_agent.py   # 生成 tts_input.txt
+python main.py             # 打开 GUI，粘贴内容，开始队列
 ```
 
-### 生成图标
+### 三、调试 / 修改 AI 提示词
 
-```bash
-python make_icon.py
-```
+直接编辑 `prompt.txt`，保存后下次生成自动读取，无需改代码。
 
-会在当前目录生成 `logo.png` 和 `logo_fixed.ico`。
+### 四、批量发送到云中客
 
-### 执行打包
-
-```bash
-pyinstaller "AI音频下载工具.spec" --noconfirm
-```
-
-> 打包完成后，可分发目录为 `dist/AI音频下载工具/`（需整个文件夹一起压缩发送，不能只发 `.exe`）。
-
----
-
-## 配置说明
-
-### config.py（不提交到 git）
+配置 `sender/sender.py` 顶部配置区：
 
 ```python
-ACCESS_CODE = "your_password_here"   # 软件启动密码
+VOICE_DIR  = ...           # 默认 ../output，通常无需修改
+EXCEL_FILE = Path("好友数据_xxx.xlsx")  # 从云中客导出的好友列表（A列昵称 B列备注）
+MAX_SEND   = None          # None 不限制；设数字防误操作
 ```
 
-### 目标平台
+运行：
 
-程序默认对接的平台地址在 `ui/app.py` 中的 `BASE_URL` 变量，按需修改。
+```bash
+python sender/sender.py
+```
+
+首次运行或 session 过期时会自动登录，登录态保存到 `sender/session.json`。
 
 ---
 
-## 常见问题
+## 文件结构
 
-**Q：浏览器打开后一直卡在登录页？**
-A：平台登录状态存储在 `cookies.json`，首次使用需手动登录一次，之后会自动复用。
-
-**Q：音频捕获失败？**
-A：检查平台的「试听」按钮是否正常显示，网络是否畅通。状态栏会显示详细进度。
-
-**Q：EXE 双击无反应？**
-A：确保 `_internal/` 目录和 `AI音频下载工具.exe` 在同一文件夹下，不能单独运行 exe。
-
-**Q：更换平台账号？**
-A：删除 `cookies.json` 后重启程序，重新手动登录即可。
+```
+voice/
+├── config.example.py     # 配置模板（复制为 config.py 后填写）
+├── config.py             # 实际配置（已 gitignore，不提交）
+├── prompt.txt            # AI 话术提示词（可直接编辑）
+├── 话术原料.xlsx          # 待发送名单模板（姓名+赛道+备注）
+├── main.py               # TTS 工具启动入口
+├── browser.py            # TTS 自动化核心（Playwright）
+├── gen_tts_agent.py      # DeepSeek 话术生成智能体
+├── gen_tts_input.py      # 静态话术合并工具（备用）
+├── ui/
+│   ├── app.py            # GUI 主界面
+│   ├── models.py         # 任务数据模型
+│   ├── queue_manager.py  # 队列管理
+│   └── theme.py          # 颜色主题
+├── utils/
+│   └── naming.py         # MP3 命名（支持 备注::话术 格式）
+├── output/               # 生成的 MP3（已 gitignore）
+└── sender/
+    ├── sender.py         # 云中客批量发送脚本
+    └── session.json      # CRM 登录态（已 gitignore，本地保留）
+```
 
 ---
 
 ## 注意事项
 
-- `cookies.json` 包含登录凭证，**请勿提交到 git 或分享给他人**
-- 音频输出默认保存在 `output/` 目录，文件名取文案前两字
-- 建议每次修改代码后重新执行打包流程，确保 exe 与源码同步
+- `config.py`、`*.xlsx`、`session.json`、`output/` 均已加入 `.gitignore`，不会提交
+- `prompt.txt` 已提交，修改后 push 即可同步给团队
+- 若 session 过期，删除 `sender/session.json` 重新运行即可
+- MP3 若生成后发现文件名有 BOM 字符（`\ufeff`），运行以下修复：
+
+  ```python
+  import os; d = "output"
+  for f in os.listdir(d):
+      if f.startswith('\ufeff'):
+          os.rename(f"{d}/{f}", f"{d}/{f.lstrip(chr(0xfeff))}")
+  ```
+
+---
+
+## Claude Code 快速上手
+
+用 Claude Code 打开本项目后，可以直接说：
+
+- "帮我修改提示词，改成 XXX 风格"
+- "批量发送失败了，看看 sender.py 的日志"
+- "新增功能：发完后在 Excel 里标记已发送"
